@@ -37,6 +37,8 @@ installBrew() {
     echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.bash_profile
   fi
 
+  brew install zsh-syntax-highlighting
+
   brew install --cask visual-studio-code
   brew install --cask docker
   brew install --cask postman
