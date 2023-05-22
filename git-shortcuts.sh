@@ -28,7 +28,7 @@ gb() {
   git branch
 }
 
-gswitch() {
+gbs() {
   git switch $1
 }
 
