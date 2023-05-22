@@ -29,10 +29,15 @@ gb() {
 }
 
 gbs() {
-  git switch $1
+  exists=$(gb | grep -w $1)
+
+  if [ -n "$exists" ] ; 
+  then git switch $1
+  else gnb $1
+  fi
 }
 
-gallc() {
+gcall() {
     git add .
     git commit -m $1
 }
