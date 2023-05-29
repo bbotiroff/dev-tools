@@ -74,5 +74,6 @@ _comp_options+=(globdots)
 # Load aliases and shortcuts if existent.
 # [ -f "$HOME/.config/shortcutrc" ] && source "$HOME/.config/shortcutrc"
 # [ -f "$HOME/.config/aliasrc" ] && source "$HOME/.config/aliasrc"
+source ~/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh
 
 echo "bbotiroff-profile shell is loaded for $(whoami)"

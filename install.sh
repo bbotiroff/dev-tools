@@ -21,6 +21,12 @@ setBBotiroffZshProfile() {
   if ! grep -q "$profileString" ~/.zshrc ; then 
     echo "export BBOTIROFF_DEV_TOOL_PATH=$bbotiroffProfileFullPath" >> ~/.zshrc
     echo $profileString >> ~/.zshrc
+    
+    /bin/zsh git clone https://github.com/zsh-users/zsh-autosuggestions ~/.zsh/zsh-autosuggestions
+
+    # Installing syntax highlighting - this has to be at the end of the file
+    /bin/zsh brew install zsh-syntax-highlighting
+    echo "source /opt/homebrew/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" >> ~/.zshrc
   fi
 }
 
@@ -37,14 +43,12 @@ installBrew() {
     echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.bash_profile
   fi
 
-  brew install zsh-syntax-highlighting
-
-  brew install --cask visual-studio-code
-  brew install --cask docker
-  brew install --cask postman
-  brew install --cask another-redis-desktop-manager
-  brew install --cask tableplus
-  brew install --cask powershell
+  /bin/zsh brew install --cask visual-studio-code
+  /bin/zsh brew install --cask docker
+  /bin/zsh brew install --cask postman
+  /bin/zsh brew install --cask another-redis-desktop-manager
+  /bin/zsh brew install --cask tableplus
+  /bin/zsh brew install --cask powershell
 }
 
 installBrew
@@ -52,5 +56,5 @@ setBBotiroffBashProfile
 setBBotiroffZshProfile
 
 # TODO: script to install vscode, nodejs
-
+export PATH="$PATH:/Applications/Rider.app/Contents/MacOS"
 echo "dev-tools are installed. Please reopen your terminal!"
