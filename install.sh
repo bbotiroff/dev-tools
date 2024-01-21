@@ -17,6 +17,7 @@ setBBotiroffZshProfile() {
   profileString="source $bbotiroffProfileFullPath/zsh/.zshrc"
 
   touch ~/.zshrc
+  mkdir ~/Documents/workspace
 
   if ! grep -q "$profileString" ~/.zshrc ; then 
     echo "export BBOTIROFF_DEV_TOOL_PATH=$bbotiroffProfileFullPath" >> ~/.zshrc

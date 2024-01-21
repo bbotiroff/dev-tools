@@ -22,6 +22,8 @@ zmodload zsh/complist
 compinit
 _comp_options+=(globdots)
 
+bindkey -s '^g' 'cd ~/Documents/workspace\n'
+
 # vi mode
 # bindkey -v
 # export KEYTIMEOUT=1
