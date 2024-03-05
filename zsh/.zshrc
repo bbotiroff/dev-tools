@@ -15,7 +15,7 @@ PS1='%B%{$fg[cyan]%}%n%{$fg[white]%}@%{$fg[green]%}%~%{$fg[yellow]%} $(parse_git
 # History in cache directory
 HISTSIZE=10000
 SAVEHIST=10000
-HISTFILE=~/.cache/zsh/history
+HISTFILE=~/.zsh_history
 
 # Basic auto/tab complete
 autoload -U compinit
