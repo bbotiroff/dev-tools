@@ -1,0 +1,13 @@
+### Creating aliasas you can follow this doc: https://linuxhandbook.com/zsh-aliases/
+
+# docker
+alias dcupd="docker compose up -d"
+alias dcup="docker compose up"
+
+# kubernetes
+alias k="kubectl"
+
+# function aliasas
+find_man() { # searches through man page for specific string/text, usage: find_man kill SIGTERM
+    man $1 | grep -- $2
+}

@@ -1,0 +1,2 @@
+bindkey -s '^g' 'cd ~/Documents/workspace\n'
+bindkey -s '^r' 'source ~/.zshrc \n'

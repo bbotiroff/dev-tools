@@ -1,5 +1,7 @@
 autoload -U colors && colors
 
+source $BBOTIROFF_DEV_TOOL_PATH/shortcutsrc
+source $BBOTIROFF_DEV_TOOL_PATH/aliasrc
 source $BBOTIROFF_DEV_TOOL_PATH/git-shortcuts.sh
 
 function parse_git_branch() {
@@ -21,8 +23,6 @@ zstyle ':comletion:*' menu select
 zmodload zsh/complist
 compinit
 _comp_options+=(globdots)
-
-bindkey -s '^g' 'cd ~/Documents/workspace\n'
 
 # vi mode
 # bindkey -v

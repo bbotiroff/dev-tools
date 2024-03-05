@@ -47,3 +47,7 @@ gdeletebranches() {
     git branch | grep -v ^* |  grep -v "develop" | grep -v "dev" | grep -v "staging" | grep -v "master" | grep -v "main" | xargs git branch -D
 }
 
+# starts the maintenance on the repository
+gmmaintenance() {
+  git maintenance start
+}

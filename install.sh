@@ -44,6 +44,17 @@ installBrew() {
     echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.bash_profile
   fi
 
+  brew install kubectx
+  brew install awscli
+  brew install awscli-local
+  brew install minikube
+  brew install helm
+  brew install azure-cli
+  brew install jq
+  brew install k9s
+  brew install node
+  brew install nodenv
+
   brew install --cask visual-studio-code
   brew install --cask docker
   brew install --cask postman
