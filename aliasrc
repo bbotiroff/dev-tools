@@ -1,5 +1,7 @@
 ### Creating aliasas you can follow this doc: https://linuxhandbook.com/zsh-aliases/
 
+alias devtool="code $BBOTIROFF_DEV_TOOL_PATH"
+
 # docker
 alias dcupd="docker compose up -d"
 alias dcup="docker compose up"
