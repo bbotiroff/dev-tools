@@ -8,6 +8,14 @@ function parse_git_branch() {
     git branch 2> /dev/null | sed -n -e 's/^\* \(.*\)/[\1]/p'
 }
 
+function debase64() {
+    echo $1 | base64 -Dd
+}
+
+function enbase64() {
+    echo $1 | base64
+}
+
 setopt prompt_subst
 NEW_LINE=$'\n'
 PS1='%B%{$fg[cyan]%}%n%{$fg[white]%}@%{$fg[green]%}%~%{$fg[yellow]%} $(parse_git_branch)%b$NEW_LINE%{$fg[white]%}%B$%b '
