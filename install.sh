@@ -63,6 +63,7 @@ installBrew() {
   brew install --cask tableplus
   brew install --cask powershell
   brew install --cask 1password
+  brew install --cask google-chrome
 }
 
 installBrew
