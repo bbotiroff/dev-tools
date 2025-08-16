@@ -8,11 +8,11 @@ function parse_git_branch() {
     git branch 2> /dev/null | sed -n -e 's/^\* \(.*\)/[\1]/p'
 }
 
-function debase64() {
+function basede() {
     echo $1 | base64 -Dd
 }
 
-function enbase64() {
+function baseen() {
     echo $1 | base64
 }
 

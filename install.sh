@@ -60,11 +60,10 @@ installBrew() {
   brew install --cask docker
   brew install --cask postman
   brew install --cask another-redis-desktop-manager
-  brew install --cask tableplus
   brew install --cask powershell
   brew install --cask 1password
   brew install --cask google-chrome
-  brew install --cask telegram-desktop
+  brew install --cask claude-code
 }
 
 installBrew
