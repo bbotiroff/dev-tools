@@ -17,17 +17,20 @@ setBBotiroffZshProfile() {
   profileString="source $bbotiroffProfileFullPath/zsh/.zshrc"
 
   touch ~/.zshrc
-  mkdir ~/Documents/workspace
+  mkdir ~/Workspace
 
   if ! grep -q "$profileString" ~/.zshrc ; then 
     echo "export BBOTIROFF_DEV_TOOL_PATH=$bbotiroffProfileFullPath" >> ~/.zshrc
     echo $profileString >> ~/.zshrc
     
-    git clone https://github.com/zsh-users/zsh-autosuggestions ~/.zsh/zsh-autosuggestions
-
     # Installing syntax highlighting - this has to be at the end of the file
+    brew install zsh-history-substring-search
+    brew install zsh-autosuggestions
     brew install zsh-syntax-highlighting
+
     echo "source /opt/homebrew/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" >> ~/.zshrc
+    echo "source /opt/homebrew/share/zsh-history-substring-search/zsh-history-substring-search.zsh" >> ~/.zshrc
+    echo "source /opt/homebrew/share/zsh-navigation-tools/zsh-navigation-tools.plugin.zsh" >> ~/.zshrc
   fi
 }
 
@@ -64,6 +67,7 @@ installBrew() {
   brew install --cask 1password
   brew install --cask google-chrome
   brew install --cask claude-code
+  brew install --cask mongodb-compass
 }
 
 installBrew
