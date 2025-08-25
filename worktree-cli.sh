@@ -7,7 +7,8 @@ wt() {
     
     case "$subcommand" in
         add)
-            _wt_add "$@"
+            # Run in subshell with job control disabled to suppress notifications
+            ( set +m 2>/dev/null; _wt_add "$@" )
             ;;
         ls|list)
             _wt_list "$@"
@@ -16,7 +17,8 @@ wt() {
             _wt_remove "$@"
             ;;
         clean)
-            _wt_clean "$@"
+            # Run in subshell with job control disabled to suppress notifications
+            ( set +m 2>/dev/null; _wt_clean "$@" )
             ;;
         help|--help|-h|"")
             _wt_help
@@ -58,7 +60,7 @@ Notes:
 EOF
 }
 
-# Add/Create worktree function
+# Add/Create worktree function  
 _wt_add() {
     local feature_name="$1"
     
@@ -79,8 +81,11 @@ _wt_add() {
     local git_root=$(git rev-parse --show-toplevel)
     local project_folder_name=$(basename "$git_root")
     
+    # Sanitize feature name for folder creation (replace / with -)
+    local sanitized_name="${feature_name//\//-}"
+    
     # Create the new worktree folder name
-    local worktree_folder="${project_folder_name}-${feature_name}"
+    local worktree_folder="${project_folder_name}-${sanitized_name}"
     local parent_dir=$(dirname "$git_root")
     local worktree_path="${parent_dir}/${worktree_folder}"
     
@@ -90,52 +95,102 @@ _wt_add() {
         return 1
     fi
     
-    # Check if branch already exists
-    if git show-ref --verify --quiet "refs/heads/${feature_name}"; then
-        echo "Branch '${feature_name}' already exists. Creating worktree with existing branch..."
-        git worktree add "$worktree_path" "$feature_name"
-    else
-        echo "Creating new branch '${feature_name}' and worktree..."
-        git worktree add -b "$feature_name" "$worktree_path"
-    fi
+    # Step 1: Create git worktree with progress
+    printf "Git worktree: "
     
-    if [ $? -ne 0 ]; then
+    # Run git command in subshell to avoid job notifications
+    (
+        if git show-ref --verify --quiet "refs/heads/${feature_name}"; then
+            exec git worktree add "$worktree_path" "$feature_name" > /dev/null 2>&1
+        else
+            exec git worktree add -b "$feature_name" "$worktree_path" > /dev/null 2>&1
+        fi
+    ) &
+    
+    local git_pid=$!
+    
+    # Show progress for git worktree
+    local dots=""
+    while kill -0 $git_pid 2>/dev/null; do
+        printf "\rGit worktree: [%-20s]" "$dots"
+        dots="${dots}##"
+        if [ ${#dots} -gt 20 ]; then
+            dots="##"
+        fi
+        sleep 0.1
+    done 2>/dev/null
+    
+    wait $git_pid 2>/dev/null
+    local git_result=$?
+    
+    if [ $git_result -ne 0 ]; then
+        printf "\rGit worktree: [FAILED              ]\n"
         echo "Error: Failed to create worktree"
         return 1
     fi
     
-    echo "Worktree created at: ${worktree_path}"
+    printf "\rGit worktree: [####################] 100%%\n"
     
-    # Copy all files including hidden and gitignored ones
-    echo "Copying all files including hidden and gitignored files..."
+    # Step 2: Copy hidden/ignored files with progress
+    printf "Copying project files: "
     
-    # Use rsync to copy everything except .git directory
+    # Use rsync if available for better performance
     if command -v rsync &> /dev/null; then
-        rsync -av --progress \
-            --exclude='.git' \
-            --exclude="${worktree_folder}" \
-            "${git_root}/" "${worktree_path}/" 2>/dev/null
+        # Run rsync in subshell to avoid job notifications
+        (
+            exec rsync -a \
+                --exclude='.git' \
+                --exclude="${worktree_folder}" \
+                "${git_root}/" "${worktree_path}/" 2>/dev/null
+        ) &
+        
+        local rsync_pid=$!
+        
+        # Simple progress animation while rsync runs
+        local progress=0
+        
+        while kill -0 $rsync_pid 2>/dev/null; do
+            # Create progress bar
+            local filled=$((progress / 5))
+            local bar=$(printf "%${filled}s" | tr ' ' '#')
+            local empty=$((20 - filled))
+            local spaces=$(printf "%${empty}s")
+            
+            printf "\rCopying project files: [%s%s] %d%%" "$bar" "$spaces" "$progress"
+            
+            # Update progress
+            if [ $progress -lt 95 ]; then
+                progress=$((progress + 3))
+            fi
+            sleep 0.05
+        done 2>/dev/null
+        
+        wait $rsync_pid 2>/dev/null
+        printf "\rCopying project files: [####################] 100%%\n"
     else
-        # Fallback to cp if rsync is not available
+        # Fallback to cp with simple progress
         cp -R "${git_root}/." "${worktree_path}/" 2>/dev/null
+        printf "[####################] 100%%\n"
     fi
-    
-    echo "Files copied successfully"
     
     # Switch to the feature branch in the worktree
     cd "$worktree_path"
-    git checkout "$feature_name" 2>/dev/null || git checkout -b "$feature_name" 2>/dev/null
-    
-    echo "Switched to branch: ${feature_name}"
+    git checkout "$feature_name" > /dev/null 2>&1 || git checkout -b "$feature_name" > /dev/null 2>&1
     
     # Open new terminal window
-    _wt_open_terminal "$worktree_path"
+    _wt_open_terminal "$worktree_path" > /dev/null 2>&1
     
+    # Show summary
     echo ""
-    echo "✅ Worktree setup complete!"
-    echo "📁 Location: ${worktree_path}"
-    echo "🌿 Branch: ${feature_name}"
-    echo "💻 New terminal window should open in the worktree directory"
+    echo "Summary:"
+    echo "--------"
+    echo "✓ Git worktree created with branch: ${feature_name}"
+    echo "✓ All project files copied (including .env, node_modules, etc.)"
+    echo ""
+    printf "%-20s %s\n" "Worktree name:" "${worktree_folder}"
+    printf "%-20s %s\n" "Branch:" "${feature_name}"
+    printf "%-20s %s\n" "Location:" "${worktree_path}"
+    echo ""
     
     # Return to original directory
     cd "$git_root"
@@ -148,38 +203,32 @@ _wt_list() {
         return 1
     fi
     
-    echo "Current worktrees:"
-    echo "─────────────────"
-    
     # Get main worktree
     local main_worktree=$(git rev-parse --show-toplevel)
     
+    printf "\n%-30s %-30s %s\n" "NAME" "BRANCH" "PATH"
+    
     # Parse and display worktree information
     git worktree list | while IFS= read -r line; do
-        local path=$(echo "$line" | awk '{print $1}')
-        local commit=$(echo "$line" | awk '{print $2}')
-        local branch=$(echo "$line" | awk '{print $3}' | tr -d '[]')
+        # Extract path (first field)
+        local wt_path=${line%% *}
         
-        if [ "$path" = "$main_worktree" ]; then
-            echo "📍 [MAIN] $(basename $path)"
-            echo "   Path: ${path}"
-            echo "   Branch: ${branch}"
-            echo ""
+        # Extract branch name (text within brackets)
+        local branch_part=${line#*\[}
+        local branch=${branch_part%\]*}
+        
+        # Get the base name of the path
+        local name=${wt_path##*/}
+        
+        # Mark main worktree
+        if [ "$wt_path" = "$main_worktree" ]; then
+            printf "%-30s %-30s %s\n" "${name} [main]" "$branch" "$wt_path"
         else
-            local feature_name=$(basename "$path" | sed "s/^$(basename $main_worktree)-//")
-            echo "🌿 ${feature_name}"
-            echo "   Path: ${path}"
-            echo "   Branch: ${branch}"
-            echo ""
+            printf "%-30s %-30s %s\n" "$name" "$branch" "$wt_path"
         fi
     done
     
-    # Count worktrees
-    local total=$(git worktree list | wc -l)
-    local additional=$((total - 1))
-    
-    echo "─────────────────"
-    echo "Total: ${total} worktree(s) (1 main + ${additional} additional)"
+    echo ""
 }
 
 # Remove specific worktree function
@@ -202,9 +251,12 @@ _wt_remove() {
     local git_root=$(git rev-parse --show-toplevel)
     local project_folder_name=$(basename "$git_root")
     
+    # Sanitize feature name for folder lookup (replace / with -)
+    local sanitized_name="${feature_name//\//-}"
+    
     # Construct the expected worktree path
     local parent_dir=$(dirname "$git_root")
-    local worktree_folder="${project_folder_name}-${feature_name}"
+    local worktree_folder="${project_folder_name}-${sanitized_name}"
     local worktree_path="${parent_dir}/${worktree_folder}"
     
     # Check if the worktree exists
@@ -287,7 +339,7 @@ _wt_clean() {
     echo -e "$worktree_list"
     
     # Ask for confirmation
-    echo -n "⚠️  This will permanently delete these directories. Continue? (y/N): "
+    echo -n "This will permanently delete these directories. Continue? (y/N): "
     read -r confirmation
     
     if [[ ! "$confirmation" =~ ^[Yy]$ ]]; then
@@ -296,64 +348,62 @@ _wt_clean() {
     fi
     
     echo ""
-    echo "Starting cleanup..."
-    echo "─────────────────"
+    printf "Removing worktrees: "
     
-    # Remove each worktree
+    # Remove each worktree with progress bar
     local removed_count=0
     local failed_count=0
+    local current=0
     
     while IFS= read -r worktree; do
         if [ "$worktree" != "$main_worktree" ]; then
-            local feature_name=$(basename "$worktree" | sed "s/^$(basename $main_worktree)-//")
-            echo -n "Removing '${feature_name}'... "
+            ((current++))
             
-            # First, remove the git worktree reference
+            # Calculate and show progress
+            local progress=$((current * 100 / count))
+            local bar_length=$((progress / 5))
+            local bar=$(printf "%${bar_length}s" | tr ' ' '#')
+            printf "\rRemoving worktrees: [%-20s] %d%%" "$bar" "$progress"
+            
+            # Remove the git worktree reference
             if git worktree remove "$worktree" --force 2>/dev/null; then
-                echo "✅"
                 ((removed_count++))
             else
                 # If git worktree remove fails, try manual cleanup
-                echo -n "(retrying manually)... "
-                
                 if [ -d "$worktree" ]; then
                     rm -rf "$worktree"
-                    git worktree prune
+                    git worktree prune 2>/dev/null
                     
                     if [ ! -d "$worktree" ]; then
-                        echo "✅"
                         ((removed_count++))
                     else
-                        echo "❌ Failed"
                         ((failed_count++))
                     fi
                 else
-                    git worktree prune
-                    echo "✅ (already gone)"
+                    git worktree prune 2>/dev/null
                     ((removed_count++))
                 fi
             fi
         fi
     done <<< "$worktrees"
     
-    echo "─────────────────"
-    echo "Cleanup complete!"
-    echo "✅ Removed: ${removed_count} worktree(s)"
+    # Complete the progress bar
+    printf "\rRemoving worktrees: [####################] 100%%\n"
     
+    echo ""
     if [ $failed_count -gt 0 ]; then
-        echo "❌ Failed: ${failed_count} worktree(s)"
-        echo "For failed worktrees, check permissions or try with sudo."
+        echo "Cleanup complete: ${removed_count} removed, ${failed_count} failed"
+    else
+        echo "Cleanup complete: ${removed_count} worktree(s) removed"
     fi
     
     # Final prune
-    git worktree prune
+    git worktree prune 2>/dev/null
 }
 
 # Helper function to open terminal
 _wt_open_terminal() {
     local worktree_path="$1"
-    
-    echo "Opening new terminal in worktree directory..."
     
     # Detect and open terminal based on OS and available terminal
     if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -398,8 +448,6 @@ _wt_open_terminal() {
             wezterm start --cwd "$worktree_path" &
         elif command -v xterm &> /dev/null; then
             xterm -e "cd $worktree_path && $SHELL" &
-        else
-            echo "Could not detect terminal. Please open manually: ${worktree_path}"
         fi
     elif [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == "cygwin" ]]; then
         # Windows
@@ -408,7 +456,5 @@ _wt_open_terminal() {
         else
             start cmd /c "cd /d ${worktree_path} && bash"
         fi
-    else
-        echo "Unsupported OS. Please open manually: ${worktree_path}"
     fi
 }
