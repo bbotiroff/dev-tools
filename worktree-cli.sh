@@ -43,14 +43,14 @@ Commands:
     add <feature-name>    Create a new worktree with the given feature name
     ls, list             List all active worktrees
     rm, remove <name>    Remove a specific worktree by feature name
-    clean                Remove ALL worktrees (except main)
+    clean                Remove ALL worktrees AND branches (except main)
     help                 Show this help message
 
 Examples:
     wt add new-feature   # Create a worktree for 'new-feature' branch
     wt ls                # List all worktrees
     wt rm new-feature    # Remove the 'new-feature' worktree
-    wt clean             # Remove all worktrees
+    wt clean             # Remove all worktrees and branches
 
 Notes:
     - Worktrees are created one directory above the git root
@@ -314,32 +314,57 @@ _wt_clean() {
     # Get the main worktree path
     local main_worktree=$(git rev-parse --show-toplevel)
     
-    # Get all worktrees
-    local worktrees=$(git worktree list --porcelain | grep "^worktree" | cut -d' ' -f2)
+    # Get all worktrees with branch information
+    local worktree_info=$(git worktree list --porcelain)
     
-    # Count and collect worktrees (excluding main)
+    # Count and collect worktrees (excluding main) with their branches
     local count=0
     local worktree_list=""
+    local branch_list=""
+    local branches_to_delete=""
     
-    while IFS= read -r worktree; do
-        if [ "$worktree" != "$main_worktree" ]; then
-            ((count++))
-            local feature_name=$(basename "$worktree" | sed "s/^$(basename $main_worktree)-//")
-            worktree_list="${worktree_list}  - ${feature_name} (${worktree})\n"
+    # Parse worktree info to extract paths and branches
+    local current_worktree=""
+    local current_branch=""
+    
+    while IFS= read -r line; do
+        if [[ "$line" == worktree* ]]; then
+            current_worktree="${line#worktree }"
+        elif [[ "$line" == branch* ]]; then
+            current_branch="${line#branch refs/heads/}"
+            
+            # Process the worktree-branch pair if we have both and it's not main
+            if [ -n "$current_worktree" ] && [ -n "$current_branch" ] && [ "$current_worktree" != "$main_worktree" ]; then
+                ((count++))
+                local feature_name=$(basename "$current_worktree" | sed "s/^$(basename $main_worktree)-//")
+                worktree_list="${worktree_list}  - ${feature_name} (${current_worktree})\n"
+                branch_list="${branch_list}  - ${current_branch}\n"
+                branches_to_delete="${branches_to_delete}${current_branch}\n"
+            fi
+            
+            # Reset for next iteration
+            current_worktree=""
+            current_branch=""
+        elif [ -z "$line" ]; then
+            # Empty line resets state
+            current_worktree=""
+            current_branch=""
         fi
-    done <<< "$worktrees"
+    done <<< "$worktree_info"
     
     if [ $count -eq 0 ]; then
         echo "No worktrees found to clean up."
         return 0
     fi
     
-    # Show worktrees that will be removed
+    # Show worktrees and branches that will be removed
     echo "Found ${count} worktree(s) to remove:"
     echo -e "$worktree_list"
+    echo "Associated branches that will be deleted:"
+    echo -e "$branch_list"
     
     # Ask for confirmation
-    echo -n "This will permanently delete these directories. Continue? (y/N): "
+    echo -n "This will permanently delete these directories AND branches. Continue? (y/N): "
     read -r confirmation
     
     if [[ ! "$confirmation" =~ ^[Yy]$ ]]; then
@@ -350,13 +375,35 @@ _wt_clean() {
     echo ""
     printf "Removing worktrees: "
     
+    # Parse worktree info again to get worktree paths for removal
+    local worktrees_to_remove=""
+    local current_worktree=""
+    local current_branch=""
+    
+    while IFS= read -r line; do
+        if [[ "$line" == worktree* ]]; then
+            current_worktree="${line#worktree }"
+        elif [[ "$line" == branch* ]]; then
+            current_branch="${line#branch refs/heads/}"
+            
+            # Add worktree to removal list if it's not main
+            if [ -n "$current_worktree" ] && [ -n "$current_branch" ] && [ "$current_worktree" != "$main_worktree" ]; then
+                worktrees_to_remove="${worktrees_to_remove}${current_worktree}\n"
+            fi
+            
+            # Reset for next iteration
+            current_worktree=""
+            current_branch=""
+        fi
+    done <<< "$worktree_info"
+    
     # Remove each worktree with progress bar
     local removed_count=0
     local failed_count=0
     local current=0
     
     while IFS= read -r worktree; do
-        if [ "$worktree" != "$main_worktree" ]; then
+        if [ -n "$worktree" ]; then
             ((current++))
             
             # Calculate and show progress
@@ -385,16 +432,55 @@ _wt_clean() {
                 fi
             fi
         fi
-    done <<< "$worktrees"
+    done <<< "$(echo -e "$worktrees_to_remove")"
     
     # Complete the progress bar
     printf "\rRemoving worktrees: [####################] 100%%\n"
     
+    # Now remove branches
     echo ""
-    if [ $failed_count -gt 0 ]; then
-        echo "Cleanup complete: ${removed_count} removed, ${failed_count} failed"
+    printf "Removing branches: "
+    
+    local branches_removed=0
+    local branches_failed=0
+    local branch_current=0
+    local total_branches=$(echo -e "$branches_to_delete" | grep -c '^[^[:space:]]*$' 2>/dev/null || echo 0)
+    
+    if [ $total_branches -gt 0 ]; then
+        while IFS= read -r branch; do
+            if [ -n "$branch" ]; then
+                ((branch_current++))
+                
+                # Calculate and show progress
+                local branch_progress=$((branch_current * 100 / total_branches))
+                local branch_bar_length=$((branch_progress / 5))
+                local branch_bar=$(printf "%${branch_bar_length}s" | tr ' ' '#')
+                printf "\rRemoving branches: [%-20s] %d%%" "$branch_bar" "$branch_progress"
+                
+                # Remove the branch
+                if git branch -D "$branch" > /dev/null 2>&1; then
+                    ((branches_removed++))
+                else
+                    ((branches_failed++))
+                fi
+            fi
+        done <<< "$(echo -e "$branches_to_delete")"
+        
+        # Complete the branch progress bar
+        printf "\rRemoving branches: [####################] 100%%\n"
     else
-        echo "Cleanup complete: ${removed_count} worktree(s) removed"
+        printf "[####################] 100%%\n"
+    fi
+    
+    echo ""
+    if [ $failed_count -gt 0 ] || [ $branches_failed -gt 0 ]; then
+        echo "Cleanup complete:"
+        echo "  Worktrees: ${removed_count} removed, ${failed_count} failed"
+        echo "  Branches: ${branches_removed} removed, ${branches_failed} failed"
+    else
+        echo "Cleanup complete:"
+        echo "  ${removed_count} worktree(s) removed"
+        echo "  ${branches_removed} branch(es) removed"
     fi
     
     # Final prune
