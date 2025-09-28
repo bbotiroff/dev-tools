@@ -7,7 +7,5 @@ export CLICOLOR=1
 export LSCOLORS=ExFxBxDxCxegedabagacad
 
 alias ll='ls -la'
-alias gs='git status'
-alias gb='git branch'
 
 echo "bbotiroff-profile shell is loaded for $(whoami)"

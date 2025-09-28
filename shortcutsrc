@@ -1,1 +1,32 @@
 bindkey -s '^g' 'cd ~/Workspace\n'
+
+# Multiline editing - Option+Enter inserts newline without executing
+bindkey '^[^M' self-insert-unmeta
+
+# Dev-Tools update function
+devtools-update() {
+    echo "🔄 Updating dev-tools..."
+
+    # Save current directory
+    local current_dir=$(pwd)
+
+    # Run the update script
+    if [[ -f "$BBOTIROFF_DEV_TOOL_PATH/update.sh" ]]; then
+        bash "$BBOTIROFF_DEV_TOOL_PATH/update.sh"
+
+        # Reload shell configuration
+        echo "Reloading shell configuration..."
+        source ~/.zshrc
+        echo "✅ Dev-tools updated and reloaded!"
+    else
+        echo "❌ Error: Update script not found at $BBOTIROFF_DEV_TOOL_PATH/update.sh"
+        echo "Please ensure dev-tools is properly installed"
+        return 1
+    fi
+
+    # Return to original directory
+    cd "$current_dir"
+}
+
+# Alias for quick update
+alias dtu='devtools-update'
