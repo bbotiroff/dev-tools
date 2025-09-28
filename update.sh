@@ -117,6 +117,70 @@ cleanup_old_installations() {
     fi
 }
 
+# Function to setup Claude Code configuration
+setup_claude_code() {
+    log_info "Setting up Claude Code configuration..."
+
+    # Check if Claude directory and files exist in the repo
+    if [[ ! -d "$SCRIPT_DIR/claude" ]]; then
+        log_warning "Claude configuration directory not found in repo, skipping Claude setup"
+        return 0
+    fi
+
+    # Create .claude directory if it doesn't exist
+    mkdir -p "$HOME/.claude"
+
+    # Copy/update statusline script
+    if [[ -f "$SCRIPT_DIR/claude/statusline-command.sh" ]]; then
+        if [[ -f "$HOME/.claude/statusline-command.sh" ]]; then
+            # Check if files are different
+            if ! cmp -s "$SCRIPT_DIR/claude/statusline-command.sh" "$HOME/.claude/statusline-command.sh"; then
+                backup_file "$HOME/.claude/statusline-command.sh"
+                cp "$SCRIPT_DIR/claude/statusline-command.sh" "$HOME/.claude/statusline-command.sh"
+                chmod +x "$HOME/.claude/statusline-command.sh"
+                log_success "Updated Claude Code statusline script"
+            else
+                log_info "Claude Code statusline script is up to date"
+            fi
+        else
+            cp "$SCRIPT_DIR/claude/statusline-command.sh" "$HOME/.claude/statusline-command.sh"
+            chmod +x "$HOME/.claude/statusline-command.sh"
+            log_success "Installed Claude Code statusline script"
+        fi
+    fi
+
+    # Setup/update settings.json
+    if [[ -f "$SCRIPT_DIR/claude/settings.json.template" ]]; then
+        if [[ -f "$HOME/.claude/settings.json" ]]; then
+            # Backup existing settings
+            backup_file "$HOME/.claude/settings.json"
+
+            # Try to merge settings using jq if available
+            if command -v jq &> /dev/null; then
+                # Merge statusline configuration into existing settings
+                jq -s '.[0] * .[1]' "$HOME/.claude/settings.json" "$SCRIPT_DIR/claude/settings.json.template" > "$HOME/.claude/settings.json.tmp" 2>/dev/null && {
+                    mv "$HOME/.claude/settings.json.tmp" "$HOME/.claude/settings.json"
+                    log_success "Updated Claude Code settings (existing settings preserved)"
+                } || {
+                    rm -f "$HOME/.claude/settings.json.tmp"
+                    log_warning "Could not merge settings, please manually add statusline config to ~/.claude/settings.json"
+                }
+            else
+                # Check if statusline is already configured
+                if ! grep -q "statuslineCommand" "$HOME/.claude/settings.json" 2>/dev/null; then
+                    log_warning "jq not found - please manually add statusline config from $SCRIPT_DIR/claude/settings.json.template"
+                else
+                    log_info "Claude Code settings already has statusline configured"
+                fi
+            fi
+        else
+            # No existing settings, just copy template
+            cp "$SCRIPT_DIR/claude/settings.json.template" "$HOME/.claude/settings.json"
+            log_success "Created Claude Code settings with statusline configuration"
+        fi
+    fi
+}
+
 # Function to validate installation
 validate_installation() {
     log_info "Validating installation..."
@@ -146,6 +210,22 @@ validate_installation() {
             ((issues++))
         fi
     done
+
+    # Check Claude Code setup if directory exists
+    if [[ -d "$SCRIPT_DIR/claude" ]]; then
+        if [[ ! -f "$HOME/.claude/statusline-command.sh" ]]; then
+            log_warning "Claude Code statusline script not installed"
+            ((issues++))
+        elif [[ ! -x "$HOME/.claude/statusline-command.sh" ]]; then
+            log_warning "Claude Code statusline script not executable"
+            ((issues++))
+        fi
+
+        if [[ ! -f "$HOME/.claude/settings.json" ]]; then
+            log_warning "Claude Code settings not configured"
+            ((issues++))
+        fi
+    fi
 
     if [[ $issues -eq 0 ]]; then
         log_success "Installation validation passed"
@@ -177,7 +257,11 @@ main() {
     cleanup_old_installations
     echo
 
-    # Step 5: Validate installation
+    # Step 5: Setup Claude Code configuration
+    setup_claude_code
+    echo
+
+    # Step 6: Validate installation
     validate_installation
     echo
 
