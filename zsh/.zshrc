@@ -29,7 +29,7 @@ function baseen() {
 setopt prompt_subst
 NEW_LINE=$'\n'
 # Enhanced colorized prompt
-PS1='%{$fg_bold[cyan]%}%n %{$fg_bold[blue]%}%~%{$reset_color%} $(parse_git_branch)$NEW_LINE%{$fg_bold[white]%}$ %{$reset_color%}'
+PS1='%{$fg_bold[cyan]%}%n@%{$fg_bold[blue]%}%~%{$reset_color%} $(parse_git_branch)$NEW_LINE%{$fg_bold[white]%}$ %{$reset_color%}'
 
 # History in cache directory
 HISTSIZE=10000
