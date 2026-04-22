@@ -161,11 +161,16 @@ Advanced git worktree management with the `wt` command:
 
 ### 🤖 Claude Code Integration
 
-Custom statusline showing:
-- Token usage and context percentage
-- Current git branch
-- Session information
-- Model details
+Custom statusline (`~/.claude/statusline-command.sh`) showing, left-to-right:
+- `user@dir` — bold cyan user + bold blue path (with `~` for `$HOME`)
+- Git branch + dirty flag `*` + ahead/behind arrows `↑N`/`↓N`
+- Model name in magenta
+- Context progress bar `[████████░░] NN%` — green; turns red at ≤20%
+- Language badge — Node `vXX/pkgmgr` (JS/TS), `go X.Y[/framework]` (Go), or `dotnet X.Y[/framework]` (.NET)
+- AWS profile (when `$AWS_PROFILE` or `$AWS_VAULT` is set)
+- Output style name (when non-default)
+
+Reads Claude Code's native `context_window.remaining_percentage` JSON field — no estimation. The `update.sh` script keeps it in sync and merges only the `statusLine` block into your `~/.claude/settings.json`, preserving any other personal keys (plugins, voice, etc.).
 
 ### 🔧 Development Tools
 
@@ -174,6 +179,8 @@ Quick access to tools:
 | Alias | Description |
 |-------|-------------|
 | `devtool` | Open dev-tools in VS Code |
+| `devtool update` | Pull latest changes and run `update.sh` (same as `dtu`) |
+| `devtool help` | Show `devtool` subcommand usage |
 | `k` | kubectl shortcut |
 | `dcup` | docker-compose up |
 | `dcupd` | docker-compose up -d |

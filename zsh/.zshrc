@@ -26,6 +26,11 @@ function baseen() {
     echo $1 | base64
 }
 
+function aws-ctx() {
+  export AWS_PROFILE="$(aws configure list-profiles | fzf)"
+  echo "Switched to profile ""$AWS_PROFILE""."
+}
+
 setopt prompt_subst
 NEW_LINE=$'\n'
 # Enhanced colorized prompt

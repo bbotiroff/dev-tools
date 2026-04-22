@@ -30,3 +30,30 @@ devtools-update() {
 
 # Alias for quick update
 alias dtu='devtools-update'
+
+# devtool: subcommand dispatcher (replaces the old `code` alias)
+devtool() {
+    local subcommand="$1"
+    case "$subcommand" in
+        update)
+            shift
+            devtools-update "$@"
+            ;;
+        help|--help|-h)
+            echo "Usage: devtool [command]"
+            echo ""
+            echo "Commands:"
+            echo "  (no args)   Open dev-tools repo in VS Code"
+            echo "  update      Pull latest changes and run update.sh (alias: dtu)"
+            echo "  help        Show this message"
+            ;;
+        "")
+            code "$BBOTIROFF_DEV_TOOL_PATH"
+            ;;
+        *)
+            echo "devtool: unknown subcommand '$subcommand'"
+            echo "Run 'devtool help' for usage"
+            return 1
+            ;;
+    esac
+}
