@@ -165,6 +165,108 @@ get_token_label() {
 }
 
 # ---------------------------------------------------------------------------
+# RATE-LIMIT RESET TIME FORMATTER
+# Converts an epoch-seconds resets_at into the same format /usage prints:
+#   within 24h → "1am" / "12pm" (lowercase, no minutes)
+#   beyond 24h → "Apr 25 10pm"
+# BSD date (macOS) syntax: `date -r <epoch> "+<fmt>"`.
+# Silent when epoch is empty or parsing fails.
+# ---------------------------------------------------------------------------
+format_reset_time() {
+    local epoch="$1"
+    [ -z "$epoch" ] || [ "$epoch" = "null" ] && return
+
+    local now
+    now=$(date +%s)
+    local delta=$(( epoch - now ))
+
+    local out=""
+    if [ "$delta" -gt 86400 ]; then
+        # Beyond 24h — match /usage's "Apr 25 at 10pm" phrasing exactly
+        out=$(date -r "$epoch" "+%b %-d at %-I%p" 2>/dev/null)
+    else
+        # Within 24h — just the hour, e.g. "1am" / "12pm"
+        out=$(date -r "$epoch" "+%-I%p" 2>/dev/null)
+    fi
+
+    [ -z "$out" ] && return
+    # Lowercase only the trailing AM/PM — keep the month name capitalized.
+    # BSD date on macOS has no %P (lowercase am/pm) format specifier, so we
+    # post-process instead.
+    printf '%s' "$out" | sed 's/AM$/am/; s/PM$/pm/'
+}
+
+# ---------------------------------------------------------------------------
+# RATE-LIMIT BAR SEGMENT
+# Renders one /usage burn window as  "label [████░░░░░░] NN% · resets 1am"
+# Same 10-cell block-bar and color thresholds as the context progress bar:
+#   < 50%  → green
+#   50-85% → yellow
+#   > 85%  → red
+# The "· resets <time>" tail is dim so the percentage stays the focal point,
+# and is omitted when no reset epoch is available.
+# Silent when used_pct is empty/null.  Rate-limit fields are populated by
+# Claude Code only after the first API response of a session, and only for
+# Claude.ai Pro/Max subscribers — expect no output on fresh sessions or on
+# direct-API usage without a plan.
+# ---------------------------------------------------------------------------
+get_rate_limit_bar() {
+    local label="$1"
+    local used_pct="$2"
+    local reset_epoch="$3"
+    # Optional 4th arg: pad the label to this width (for vertical alignment
+    # across multiple rate-limit rows).  Defaults to the label's own length
+    # so single-row callers render without trailing spaces.
+    local label_width="${4:-${#label}}"
+
+    if [ -z "$used_pct" ] || [ "$used_pct" = "null" ]; then
+        return
+    fi
+
+    local used_int
+    used_int=$(printf "%.0f" "$used_pct")
+
+    # Build a 10-cell block-bar (filled = used, empty = free), identical to
+    # the context bar's visual so the statusline speaks one language.
+    local total_cells=10
+    local filled=$(( used_int * total_cells / 100 ))
+    [ "$filled" -gt "$total_cells" ] && filled=$total_cells
+
+    local bar=""
+    local i=0
+    while [ "$i" -lt "$filled" ]; do
+        bar="${bar}█"
+        i=$(( i + 1 ))
+    done
+    while [ "$i" -lt "$total_cells" ]; do
+        bar="${bar}░"
+        i=$(( i + 1 ))
+    done
+
+    local color
+    if [ "$used_int" -ge 85 ]; then
+        color="\033[0;31m"   # red
+    elif [ "$used_int" -ge 50 ]; then
+        color="\033[0;33m"   # yellow
+    else
+        color="\033[0;32m"   # green
+    fi
+
+    # Dim-gray reset suffix (matches divider color) — skipped when unavailable
+    local reset_suffix=""
+    local reset_text
+    reset_text=$(format_reset_time "$reset_epoch")
+    if [ -n "$reset_text" ]; then
+        reset_suffix=$(printf " \033[2mresets %s\033[0m" "$reset_text")
+    fi
+
+    # %-*s pads the label to label_width (left-aligned) — bars align across
+    # rows.  %3d right-aligns the percentage so "resets ..." starts at the
+    # same column regardless of 1- or 2-digit values.
+    printf "%s%-*s [%s] %3d%%\033[0m%s" "$color" "$label_width" "$label" "$bar" "$used_int" "$reset_suffix"
+}
+
+# ---------------------------------------------------------------------------
 # LANGUAGE / FRAMEWORK SEGMENT
 # Detection order (first match wins, no deep recursion):
 #   JS/TS  → package.json  → Node version + package manager (npm/yarn/pnpm/bun)
@@ -383,6 +485,17 @@ fi
 # context_window_size: maximum tokens for this model (e.g. 200000 for Claude 3/3.5)
 ctx_size=$(printf '%s' "$input" | jq -r '.context_window.context_window_size // empty')
 
+# Rate-limit burn windows — mirror what /usage displays
+#   five_hour : rolling 5-hour session cap (resets on the hour)
+#   seven_day : rolling 7-day all-models cap
+# resets_at is an epoch-seconds timestamp; format_reset_time renders it.
+# Fields are only populated after the first API response and only for Pro/Max
+# subscribers; absent values fall through silently via the bar getter.
+rl_5h_pct=$(printf '%s'   "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty')
+rl_5h_reset=$(printf '%s' "$input" | jq -r '.rate_limits.five_hour.resets_at       // empty')
+rl_7d_pct=$(printf '%s'   "$input" | jq -r '.rate_limits.seven_day.used_percentage // empty')
+rl_7d_reset=$(printf '%s' "$input" | jq -r '.rate_limits.seven_day.resets_at       // empty')
+
 # Fallback to pwd if current_dir not provided
 [ -z "$current_dir" ] && current_dir=$(pwd)
 
@@ -462,3 +575,28 @@ if [ "${#segments[@]}" -gt 0 ]; then
 fi
 
 printf "\n"
+
+# ---------------------------------------------------------------------------
+# CONTINUATION LINES — /usage burn window bars
+# Claude Code renders each newline in statusline stdout as its own row.  Each
+# bar gets its own line to mirror the /usage slash-command layout — one
+# window per row, easier to scan than the divider-joined single-row form.
+# Any line whose data is unavailable is simply not emitted.
+# ---------------------------------------------------------------------------
+rl_label_5h="Current session (5 hour window)"
+rl_label_7d="Current week (all models)"
+
+# Pad all labels to the longest so the [bar] columns align vertically.
+# When a future per-model row is added, include its label in this max.
+rl_label_width=${#rl_label_5h}
+[ "${#rl_label_7d}" -gt "$rl_label_width" ] && rl_label_width=${#rl_label_7d}
+
+rl_5h_bar=$(get_rate_limit_bar "$rl_label_5h" "$rl_5h_pct" "$rl_5h_reset" "$rl_label_width")
+rl_7d_bar=$(get_rate_limit_bar "$rl_label_7d" "$rl_7d_pct" "$rl_7d_reset" "$rl_label_width")
+
+[ -n "$rl_5h_bar" ] && printf "%b\n" "$rl_5h_bar"
+[ -n "$rl_7d_bar" ] && printf "%b\n" "$rl_7d_bar"
+
+# Always exit clean — prior [ -n ... ] tests leak their non-zero exit when the
+# conditional is false, and this script runs on every redraw.
+exit 0
