@@ -412,8 +412,9 @@ get_effort_segment() {
 
     # Probe JSON candidates in priority order
     effort=$(printf '%s' "$json_input" | jq -r '
-        .effort //
+        .effort.level //
         .effort_level //
+        .model.effort.level //
         .model.effort //
         .model.effort_level //
         .config.effort //

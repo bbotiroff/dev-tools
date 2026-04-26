@@ -106,6 +106,18 @@ setupClaudeCode() {
     fi
   fi
 
+  # Install user-level skills
+  if [ -d "$bbotiroffProfileFullPath/claude/skills" ]; then
+    mkdir -p ~/.claude/skills
+    local skill_path
+    for skill_path in "$bbotiroffProfileFullPath/claude/skills"/*/; do
+      [ -d "$skill_path" ] || continue
+      local skill_name; skill_name=$(basename "$skill_path")
+      cp -R "$skill_path" "$HOME/.claude/skills/$skill_name"
+      echo "✓ Installed skill: $skill_name"
+    done
+  fi
+
   echo "✓ Claude Code setup complete!"
 }
 

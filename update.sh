@@ -45,6 +45,16 @@ backup_file() {
     fi
 }
 
+# Function to backup directories
+backup_dir() {
+    local dir="$1"
+    if [[ -d "$dir" ]]; then
+        mkdir -p "$BACKUP_DIR"
+        cp -R "$dir" "$BACKUP_DIR/$(basename "$dir")"
+        log_info "Backed up $dir to $BACKUP_DIR"
+    fi
+}
+
 # Function to update git repository
 update_repository() {
     log_info "Updating dev-tools repository..."
@@ -181,6 +191,48 @@ setup_claude_code() {
     fi
 }
 
+# Function to setup Claude Code user-level skills
+setup_claude_skills() {
+    log_info "Setting up Claude Code skills..."
+
+    local src_skills_dir="$SCRIPT_DIR/claude/skills"
+    local dst_skills_dir="$HOME/.claude/skills"
+
+    if [[ ! -d "$src_skills_dir" ]]; then
+        log_info "No claude/skills directory in repo, skipping skill sync"
+        return 0
+    fi
+
+    if [[ -z "$(ls -A "$src_skills_dir" 2>/dev/null)" ]]; then
+        log_info "claude/skills directory is empty, nothing to sync"
+        return 0
+    fi
+
+    mkdir -p "$dst_skills_dir"
+
+    local skill_path
+    for skill_path in "$src_skills_dir"/*/; do
+        [[ -d "$skill_path" ]] || continue
+
+        local skill_name; skill_name=$(basename "$skill_path")
+        local dst_skill="$dst_skills_dir/$skill_name"
+
+        if [[ -d "$dst_skill" ]]; then
+            if diff -rq "$skill_path" "$dst_skill" >/dev/null 2>&1; then
+                log_info "Skill '$skill_name' is up to date"
+            else
+                backup_dir "$dst_skill"
+                rm -rf "$dst_skill"
+                cp -R "$skill_path" "$dst_skill"
+                log_success "Updated skill '$skill_name'"
+            fi
+        else
+            cp -R "$skill_path" "$dst_skill"
+            log_success "Installed skill '$skill_name'"
+        fi
+    done
+}
+
 # Function to validate installation
 validate_installation() {
     log_info "Validating installation..."
@@ -225,6 +277,19 @@ validate_installation() {
             log_warning "Claude Code settings not configured"
             ((issues++))
         fi
+
+        # Verify each source skill is installed
+        if [[ -d "$SCRIPT_DIR/claude/skills" ]]; then
+            local skill_path
+            for skill_path in "$SCRIPT_DIR/claude/skills"/*/; do
+                [[ -d "$skill_path" ]] || continue
+                local skill_name; skill_name=$(basename "$skill_path")
+                if [[ ! -f "$HOME/.claude/skills/$skill_name/SKILL.md" ]]; then
+                    log_warning "Claude skill '$skill_name' not installed"
+                    ((issues++))
+                fi
+            done
+        fi
     fi
 
     if [[ $issues -eq 0 ]]; then
@@ -259,6 +324,10 @@ main() {
 
     # Step 5: Setup Claude Code configuration
     setup_claude_code
+    echo
+
+    # Step 5b: Setup Claude Code user-level skills
+    setup_claude_skills
     echo
 
     # Step 6: Validate installation
