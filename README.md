@@ -161,16 +161,22 @@ Advanced git worktree management with the `wt` command:
 
 ### 🤖 Claude Code Integration
 
-Custom statusline (`~/.claude/statusline-command.sh`) showing, left-to-right:
+Custom statusline (`~/.claude/statusline-command.sh`). The main row shows, left-to-right:
 - `user@dir` — bold cyan user + bold blue path (with `~` for `$HOME`)
 - Git branch + dirty flag `*` + ahead/behind arrows `↑N`/`↓N`
-- Model name in magenta
-- Context progress bar `[████████░░] NN%` — green; turns red at ≤20%
+- Model name in magenta, e.g. `[Opus 4.8]`
+- Reasoning-effort badge when set, e.g. `[xhigh]`
+- Context progress bar `[████░░░░░░] NN%` — green < 50%, yellow 50–84%, **red ≥ 85% used**
+- Token count `340k/1.0M` (used/total, derived from the exact `used_percentage`)
 - Language badge — Node `vXX/pkgmgr` (JS/TS), `go X.Y[/framework]` (Go), or `dotnet X.Y[/framework]` (.NET)
 - AWS profile (when `$AWS_PROFILE` or `$AWS_VAULT` is set)
 - Output style name (when non-default)
 
-Reads Claude Code's native `context_window.remaining_percentage` JSON field — no estimation. The `update.sh` script keeps it in sync and merges only the `statusLine` block into your `~/.claude/settings.json`, preserving any other personal keys (plugins, voice, etc.).
+Below the main row, one `/usage`-style rate-limit bar per line (same 10-cell bar, green/yellow/red at the same thresholds):
+- **Current session (5 hour window)** and **Current week (all models)** — read straight from Claude Code's stdin (`rate_limits.*`); appear only for Pro/Max subscribers after the first API response.
+- **Per-model weekly windows** (e.g. **Current week (Fable)**) — these are *not* in the stdin payload, so they are fetched out-of-band from `GET /api/oauth/usage` (OAuth token from the macOS keychain) and cached at `~/.claude/cache/statusline-usage.json`. The render path never makes a network call: it reads the cache instantly and forks a detached refresh when the cache is older than 60s. Consequences: a per-model row is **absent on a cold start** and appears within one `refreshInterval`, and its number can lag reality by up to ~a minute. Rows the server reports drive the list, so Opus/Sonnet windows would appear automatically if added. Set `CLAUDE_STATUSLINE_NO_FETCH=1` to disable the fetch entirely.
+
+Context/token data reads Claude Code's native `context_window` JSON fields — no estimation. `settings.json.template` also sets `refreshInterval: 10` (seconds) so the bars tick while idle, not only on redraw events. The `update.sh` script keeps the script in sync and merges only the `statusLine` block into your `~/.claude/settings.json`, preserving any other personal keys (plugins, voice, etc.).
 
 ### 🔧 Development Tools
 

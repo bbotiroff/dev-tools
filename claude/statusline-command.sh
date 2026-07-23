@@ -197,6 +197,19 @@ format_reset_time() {
 }
 
 # ---------------------------------------------------------------------------
+# ISO-8601 → EPOCH SECONDS  (BSD/macOS date)
+# The /api/oauth/usage endpoint returns resets_at as an ISO-8601 string like
+# "2026-07-23T17:59:59.585244+00:00", whereas stdin gives epoch seconds.  BSD
+# date parses neither the fractional seconds nor the colon in the offset, so
+# take the leading 19 chars ("YYYY-MM-DDTHH:MM:SS") and parse them as UTC —
+# every observed value is UTC.  Empty/null in → empty out (callers guard).
+# ---------------------------------------------------------------------------
+iso_to_epoch() {
+    [ -z "$1" ] && return
+    date -j -u -f "%Y-%m-%dT%H:%M:%S" "${1:0:19}" +%s 2>/dev/null
+}
+
+# ---------------------------------------------------------------------------
 # RATE-LIMIT BAR SEGMENT
 # Renders one /usage burn window as  "label [████░░░░░░] NN% · resets 1am"
 # Same 10-cell block-bar and color thresholds as the context progress bar:
@@ -264,6 +277,97 @@ get_rate_limit_bar() {
     # rows.  %3d right-aligns the percentage so "resets ..." starts at the
     # same column regardless of 1- or 2-digit values.
     printf "%s%-*s [%s] %3d%%\033[0m%s" "$color" "$label_width" "$label" "$bar" "$used_int" "$reset_suffix"
+}
+
+# ---------------------------------------------------------------------------
+# PER-MODEL USAGE CACHE  (/api/oauth/usage)
+#
+# Claude Code's stdin payload carries only .rate_limits.five_hour and
+# .rate_limits.seven_day.  Per-model ("weekly_scoped") windows — Fable today,
+# possibly Opus/Sonnet later — exist only on the OAuth usage endpoint.  We
+# fetch them out-of-band into a small on-disk cache and render from the cache.
+#
+# HARD RULE: the render path NEVER makes a network call.  refresh_usage_cache
+# forks a detached child that repopulates the cache for the NEXT redraw, so a
+# slow or hung API can never stall the statusline.  A cold start therefore
+# shows no per-model row; it appears on a following redraw.
+#
+# Disable entirely with CLAUDE_STATUSLINE_NO_FETCH=1.
+# ---------------------------------------------------------------------------
+usage_cache="${CLAUDE_STATUSLINE_USAGE_CACHE:-$HOME/.claude/cache/statusline-usage.json}"
+
+refresh_usage_cache() {
+    [ "${CLAUDE_STATUSLINE_NO_FETCH:-0}" = "1" ] && return
+    command -v curl >/dev/null 2>&1 || return
+    command -v jq   >/dev/null 2>&1 || return
+
+    local now mtime=0
+    now=$(date +%s)
+    [ -f "$usage_cache" ] && mtime=$(stat -f %m "$usage_cache" 2>/dev/null || echo 0)
+    # Fresh enough — skip.  Once the cache exists, the touch below advances its
+    # mtime and subsequent redraws bail here; the lock below is what handles the
+    # cold-start burst where the file does not yet exist.
+    [ $(( now - mtime )) -lt 60 ] && return
+
+    mkdir -p "$(dirname "$usage_cache")" 2>/dev/null || return
+
+    # Reap an abandoned lock before contending for it.  The refresher runs in
+    # this script's process group and macOS has no setsid(1) to escape it, so a
+    # group-kill from Claude Code can orphan the lock; without this, per-model
+    # rows would freeze permanently once that happens.  A real fetch finishes in
+    # well under 10s, so 120s means "abandoned".
+    local lock="${usage_cache}.lock" lock_mtime=0
+    if [ -d "$lock" ]; then
+        lock_mtime=$(stat -f %m "$lock" 2>/dev/null || echo 0)
+        [ $(( now - lock_mtime )) -gt 120 ] && rmdir "$lock" 2>/dev/null
+    fi
+
+    # Atomic test-and-set — the only one bash 3.2 on macOS gives us (no flock).
+    # Exactly one invocation wins the mkdir; every other concurrent redraw bails.
+    # This bounds the cold-start herd (N terminals sharing one cache file) to a
+    # single curl, which a plain mtime touch cannot: on a cold cache all racers
+    # read mtime=0 and pass the staleness check before any of them touches.
+    mkdir "$lock" 2>/dev/null || return
+
+    # touch (not truncate): resets the 60s TTL clock immediately, while
+    # PRESERVING the last good body for rendering.  A failed fetch leaves the
+    # touched file in place → 60s backoff with no retry code, and the previous
+    # good data keeps rendering meanwhile.
+    touch "$usage_cache" 2>/dev/null
+
+    # The three redirections below are LOAD-BEARING, not cosmetic.  Claude Code
+    # reads this script's stdout through a pipe; a background child that
+    # inherits it holds that pipe open until it exits, blocking the reader for
+    # the full curl timeout (measured ~3.3s vs ~0.26s).  Do not remove any of
+    # </dev/null >/dev/null 2>&1.
+    # NOTE: the lock is released by an explicit rmdir at the end of this block,
+    # NOT an EXIT trap — bash 3.2 does not fire EXIT traps for a backgrounded
+    # brace group.  The block is linear with no early exits, so the final rmdir
+    # always runs on the normal path; the 120s reaper above covers a hard kill.
+    {
+        umask 077   # the cache derives from an authenticated response
+        creds=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null)
+        token=$(printf '%s' "$creds" | jq -r '.claudeAiOauth.accessToken // empty' 2>/dev/null)
+        # expiresAt is in MILLISECONDS.  If the token is expired, skip the call
+        # — do NOT attempt an OAuth refresh here: that would race Claude Code's
+        # own refresh and can invalidate the live session.  A stale token just
+        # yields no per-model rows until Claude Code renews it.
+        exp=$(printf '%s' "$creds" | jq -r '.claudeAiOauth.expiresAt // empty' 2>/dev/null)
+        if [ -n "$exp" ] && [ "$exp" -lt "$(( $(date +%s) * 1000 ))" ] 2>/dev/null; then
+            token=""
+        fi
+        unset creds
+        # Atomic publish: same-filesystem temp + rename, so a concurrent reader
+        # sees either the whole old file or the whole new one, never a torn write.
+        [ -n "$token" ] && curl -sf --max-time 5 --connect-timeout 3 \
+            -H "Authorization: Bearer $token" \
+            -H "anthropic-beta: oauth-2025-04-20" \
+            "https://api.anthropic.com/api/oauth/usage" \
+            -o "${usage_cache}.$$.tmp" \
+            && mv -f "${usage_cache}.$$.tmp" "$usage_cache"
+        rm -f "${usage_cache}.$$.tmp" 2>/dev/null
+        rmdir "$lock" 2>/dev/null   # release the fetch lock (see NOTE above)
+    } </dev/null >/dev/null 2>&1 &
 }
 
 # ---------------------------------------------------------------------------
@@ -587,16 +691,68 @@ printf "\n"
 rl_label_5h="Current session (5 hour window)"
 rl_label_7d="Current week (all models)"
 
-# Pad all labels to the longest so the [bar] columns align vertically.
-# When a future per-model row is added, include its label in this max.
+# Per-model rows come from the cached /api/oauth/usage response, not stdin.
+# Forks a background refresh when the cache is stale; never blocks this redraw.
+refresh_usage_cache
+
+# Extract each per-model ("weekly_scoped") window as  name<TAB>percent<TAB>reset.
+#   * limits[] uses the field `percent`; the top-level windows use `utilization`.
+#   * Only weekly_scoped is read — session/weekly_all duplicate the stdin rows
+#     above, and stdin is fresher, so this can never double-render.
+#   * The display_name != null guard is REQUIRED: without it a missing name
+#     collapses the array via `// 0` and shifts every column left.
+#   * percent is null until a window is first touched; render that as 0% (// 0).
+usage_scoped=$(jq -r '.limits[]?
+    | select(.kind == "weekly_scoped")
+    | select(.scope.model.display_name != null)
+    | [.scope.model.display_name, (.percent // 0), (.resets_at // "")]
+    | @tsv' "$usage_cache" 2>/dev/null)
+
+# Pad all labels to the longest so the [bar] columns align vertically —
+# including however many per-model rows the server reported this redraw.
+# Parallel indexed arrays, not an associative array — /bin/bash on macOS is 3.2.
+scoped_labels=(); scoped_pcts=(); scoped_resets=()
 rl_label_width=${#rl_label_5h}
 [ "${#rl_label_7d}" -gt "$rl_label_width" ] && rl_label_width=${#rl_label_7d}
+
+if [ -n "$usage_scoped" ]; then
+    now_epoch=$(date +%s)
+    # Here-string, NOT a pipe: under bash 3.2 `... | while read` runs the loop
+    # in a subshell and every array append / width update below is discarded.
+    while IFS=$'\t' read -r m_name m_pct m_reset; do
+        [ -z "$m_name" ] && continue
+        # display_name is server-controlled and ends up inside printf "%b",
+        # which interprets backslash escapes — strip anything that could carry
+        # an escape sequence, and bound the length.
+        m_name=$(printf '%s' "$m_name" | tr -cd '[:alnum:] ._()-' | cut -c1-24)
+        [ -z "$m_name" ] && continue
+
+        m_epoch=$(iso_to_epoch "$m_reset")
+        # Drop windows that already rolled over — a stale cache would otherwise
+        # print a reset time in the past.
+        [ -n "$m_epoch" ] && [ "$m_epoch" -le "$now_epoch" ] 2>/dev/null && continue
+
+        m_label="Current week ($m_name)"
+        [ "${#m_label}" -gt "$rl_label_width" ] && rl_label_width=${#m_label}
+        scoped_labels+=("$m_label")
+        scoped_pcts+=("$m_pct")
+        scoped_resets+=("$m_epoch")
+    done <<< "$usage_scoped"
+fi
 
 rl_5h_bar=$(get_rate_limit_bar "$rl_label_5h" "$rl_5h_pct" "$rl_5h_reset" "$rl_label_width")
 rl_7d_bar=$(get_rate_limit_bar "$rl_label_7d" "$rl_7d_pct" "$rl_7d_reset" "$rl_label_width")
 
 [ -n "$rl_5h_bar" ] && printf "%b\n" "$rl_5h_bar"
 [ -n "$rl_7d_bar" ] && printf "%b\n" "$rl_7d_bar"
+
+i=0
+while [ "$i" -lt "${#scoped_labels[@]}" ]; do
+    sc_bar=$(get_rate_limit_bar "${scoped_labels[$i]}" "${scoped_pcts[$i]}" \
+                                "${scoped_resets[$i]}" "$rl_label_width")
+    [ -n "$sc_bar" ] && printf "%b\n" "$sc_bar"
+    i=$(( i + 1 ))
+done
 
 # Always exit clean — prior [ -n ... ] tests leak their non-zero exit when the
 # conditional is false, and this script runs on every redraw.
